@@ -1,6 +1,7 @@
 package com.gl.ml;
 
 import org.apache.spark.SparkConf;
+import org.apache.spark.ml.feature.StopWordsRemover;
 import org.apache.spark.ml.feature.Tokenizer;
 import org.apache.spark.ml.feature.Word2Vec;
 import org.apache.spark.ml.feature.Word2VecModel;
@@ -14,6 +15,9 @@ import scala.collection.mutable.WrappedArray;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+
+import static org.apache.spark.sql.functions.callUDF;
+import static org.apache.spark.sql.functions.col;
 
 /**
  * Created by roman.loyko on 26-Jul-17.
@@ -48,17 +52,24 @@ public class Playground {
                 .csv(file.getAbsolutePath());
 
         Tokenizer tokenizer = new Tokenizer().setInputCol("DESCRIPTION").setOutputCol("desc_words");
-//        spark.udf().register("countTokens", (WrappedArray<?> words) -> words.size(), DataTypes.IntegerType);
+        spark.udf().register("countTokens", (WrappedArray<?> words) -> words.size(), DataTypes.IntegerType);
         Dataset<Row> tokenized = tokenizer.transform(dataset);
         tokenized.select("DESCRIPTION", "desc_words").show(false);
 
+        StopWordsRemover remover = new StopWordsRemover()
+                .setInputCol("desc_words")
+                .setOutputCol("desc_nosw");
+        Dataset<Row> swremoved = remover.transform(tokenized);
 
         Word2Vec word2Vec = new Word2Vec()
-                .setInputCol("desc_words")
+                .setInputCol("desc_nosw")
                 .setOutputCol("vectorized");
-        Word2VecModel model = word2Vec.fit(tokenized);
-        Dataset<Row> vectorized = model.transform(tokenized);
-        vectorized.select("DESCRIPTION", "desc_words", "vectorized").show(false);
+
+        Word2VecModel model = word2Vec.fit(swremoved);
+        Dataset<Row> vectorized = model.transform(swremoved);
+        vectorized.select("DESCRIPTION", "desc_words", "desc_nosw", "vectorized")
+                .withColumn("countTokens", callUDF("countTokens", col("desc_nosw")))
+                .where("countTokens = 4").show(false);
 
 //
 //        Dataset<Row> dataset2 = spark.createDataFrame(
