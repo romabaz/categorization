@@ -7,7 +7,6 @@ import org.apache.spark.ml.feature.Word2Vec;
 import org.apache.spark.ml.feature.Word2VecModel;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataTypes;
 import scala.collection.mutable.WrappedArray;
@@ -63,7 +62,9 @@ public class Playground {
 
         Word2Vec word2Vec = new Word2Vec()
                 .setInputCol("desc_nosw")
-                .setOutputCol("vectorized");
+                .setOutputCol("vectorized")
+                .setVectorSize(3)
+                .setMinCount(0);
 
         Word2VecModel model = word2Vec.fit(swremoved);
         Dataset<Row> vectorized = model.transform(swremoved);
