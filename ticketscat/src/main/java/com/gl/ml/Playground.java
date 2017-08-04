@@ -1,22 +1,25 @@
 package com.gl.ml;
 
 import org.apache.spark.SparkConf;
-import org.apache.spark.ml.feature.StopWordsRemover;
-import org.apache.spark.ml.feature.Tokenizer;
-import org.apache.spark.ml.feature.Word2Vec;
-import org.apache.spark.ml.feature.Word2VecModel;
+import org.apache.spark.ml.Pipeline;
+import org.apache.spark.ml.PipelineModel;
+import org.apache.spark.ml.PipelineStage;
+import org.apache.spark.ml.classification.LogisticRegression;
+import org.apache.spark.ml.feature.*;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.Metadata;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import scala.collection.mutable.WrappedArray;
 
 import java.io.File;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
-import static org.apache.spark.sql.functions.callUDF;
-import static org.apache.spark.sql.functions.col;
 
 /**
  * Created by roman.loyko on 26-Jul-17.
@@ -40,67 +43,101 @@ public class Playground {
                 .getOrCreate();
 
         //1. feature extraction
-        List<Row> data = new ArrayList<>();
-
-
         File file = new File(classLoader.getResource("tickets_input.csv").getFile());
+
+        int numFeatures = 100;
 
         Dataset<Row> dataset = spark.read()
                 .format("com.databricks.spark.csv")
                 .option("header", "true")
                 .csv(file.getAbsolutePath());
 
-        Tokenizer tokenizer = new Tokenizer().setInputCol("DESCRIPTION").setOutputCol("desc_words");
-        spark.udf().register("countTokens", (WrappedArray<?> words) -> words.size(), DataTypes.IntegerType);
-        Dataset<Row> tokenized = tokenizer.transform(dataset);
-        tokenized.select("DESCRIPTION", "desc_words").show(false);
+        Dataset<Row>[] splits = dataset.randomSplit(new double[]{0.7, 0.3});
+        Dataset<Row> trainingData = splits[0];
+        Dataset<Row> testData = splits[1];
+
+        Tokenizer tokenizer = new Tokenizer()
+                .setInputCol("DESCRIPTION")
+                .setOutputCol("desc_words");
 
         StopWordsRemover remover = new StopWordsRemover()
-                .setInputCol("desc_words")
+                .setInputCol(tokenizer.getOutputCol())
                 .setOutputCol("desc_nosw");
-        Dataset<Row> swremoved = remover.transform(tokenized);
 
-        Word2Vec word2Vec = new Word2Vec()
-                .setInputCol("desc_nosw")
-                .setOutputCol("vectorized")
-                .setVectorSize(3)
-                .setMinCount(0);
+        HashingTF hashingTF = new HashingTF()
+                .setInputCol(remover.getOutputCol())
+                .setOutputCol("features")
+                .setNumFeatures(numFeatures);
 
-        Word2VecModel model = word2Vec.fit(swremoved);
-        Dataset<Row> vectorized = model.transform(swremoved);
-        vectorized.select("DESCRIPTION", "desc_words", "desc_nosw", "vectorized")
-                .withColumn("countTokens", callUDF("countTokens", col("desc_nosw")))
-                .where("countTokens = 4").show(false);
-
-//
-//        Dataset<Row> dataset2 = spark.createDataFrame(
-//                dataset.javaRDD().map(row -> RowFactory.create(((String) row.get(4)).split("-"))),
-//                dataset.schema());
+        LogisticRegression lr = new LogisticRegression()
+                .setMaxIter(20)
+                .setRegParam(0.3)
+                .setElasticNetParam(0.8);
 
 
-//        InputStream inputStream = ClassLoader.getSystemResourceAsStream("kickstarter/train_red.csv");
-//        Stream<String> stream = new BufferedReader(new InputStreamReader(inputStream)).lines();
-//        stream.map(line -> line.split(",(?=([^\"]*\"[^\"]*\")*(?![^\"]*\"))")[4])
-//                .forEach(line -> {
-//                    data.add(RowFactory.create(Arrays.asList(line.split("-"))));
-//                });
+        Pipeline pipeline = new Pipeline().setStages(new PipelineStage[] {tokenizer, remover, hashingTF, lr});
 
-//        try {
-//            inputStream.close();
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//        }
+        PipelineModel model = pipeline.fit(trainingData);
 
+        model.transform(testData);
+
+        Dataset<Row> predictions = model.transform(testData);
+        for (Row r : predictions.select("id", "DESCRIPTION", "probability", "prediction").collectAsList()) {
+            System.out.println("(" + r.get(0) + ", " + r.get(1) + ") --> prob=" + r.get(2)
+                    + ", prediction=" + r.get(3));
+        }
+
+        /* ==================================
+        Example from https://spark.apache.org/docs/latest/ml-features.html#tf-idf
+         */
+
+//        List<Row> dataEx = Arrays.asList(
+//                RowFactory.create(0.0, "Hi I heard about Spark"),
+//                RowFactory.create(0.0, "I wish Java could use case classes"),
+//                RowFactory.create(2.0, "Logistic regression models are neat")
+//        );
 //        StructType schema = new StructType(new StructField[]{
-//                new StructField("text", new ArrayType(StringType, true), false, Metadata.empty())
+//                new StructField("label", DataTypes.DoubleType, false, Metadata.empty()),
+//                new StructField("sentence", DataTypes.StringType, false, Metadata.empty())
 //        });
+//        Dataset<Row> sentenceData = spark.createDataFrame(dataEx, schema);
 //
-//        Dataset<Row> documentDF = spark.createDataFrame(data, schema);
+//        Tokenizer tokenizerEx = new Tokenizer().setInputCol("sentence").setOutputCol("words");
+//        Dataset<Row> wordsData = tokenizerEx.transform(sentenceData);
 //
-//        System.out.println(dataset2.columns()[4]);
-//        for (Row row : dataset2.takeAsList(10)) {
-//            System.out.println(row.getString(4));
-//        }
+//        HashingTF hashingTFEx = new HashingTF()
+//                .setInputCol("words")
+//                .setOutputCol("rawFeatures")
+//                .setNumFeatures(numFeatures);
+//
+//        Dataset<Row> featurizedDataEx = hashingTFEx.transform(wordsData);
+//
+//        IDF idfEx = new IDF().setInputCol("rawFeatures").setOutputCol("features");
+//        IDFModel idfModelEx = idfEx.fit(featurizedDataEx);
+//
+//        Dataset<Row> rescaledDataEx = idfModelEx.transform(featurizedDataEx);
+//        rescaledDataEx.select("label", "words", "rawFeatures", "features").show(false);
+
+        /* ============
+        End of example
+         */
+
+
+//        IDF idf = new IDF().setInputCol("rawFeatures").setOutputCol("features");
+//        IDFModel idfModel = idf.fit(featurizedData);
+//        Dataset<Row> rescaledData = idfModel.transform(featurizedData);
+//
+//        Word2Vec word2Vec = new Word2Vec()
+//                .setInputCol("desc_nosw")
+//                .setOutputCol("vectorized")
+//                .setVectorSize(3)
+//                .setMinCount(0);
+//
+//        Word2VecModel model = word2Vec.fit(swremoved);
+//        Dataset<Row> vectorized = model.transform(swremoved);
+//        rescaledData.select("DESCRIPTION", "desc_words", "desc_nosw", "rawFeatures", "features").show(false);
+//                .withColumn("countTokens", callUDF("countTokens", col("desc_nosw")))
+//                .where("countTokens = 4").show(false);
 
     }
 
