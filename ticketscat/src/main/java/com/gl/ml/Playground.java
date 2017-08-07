@@ -69,76 +69,58 @@ public class Playground {
                 .setOutputCol("features")
                 .setNumFeatures(numFeatures);
 
+        IDF idf = new IDF()
+                .setInputCol(hashingTF.getOutputCol())
+                .setOutputCol("features");
+
+        StringIndexer stringIndexer1 = new StringIndexer()
+                .setInputCol("PRODUCT_CATEGORIZATION_TIER_1")
+                .setOutputCol("PCT_1_IDX")
+                .setHandleInvalid("skip");
+        StringIndexer stringIndexer2 = new StringIndexer()
+                .setInputCol("PRODUCT_CATEGORIZATION_TIER_2")
+                .setOutputCol("PCT_2_IDX")
+                .setHandleInvalid("skip");
+        StringIndexer stringIndexer3 = new StringIndexer()
+                .setInputCol("PRODUCT_CATEGORIZATION_TIER_3")
+                .setOutputCol("PCT_3_IDX")
+                .setHandleInvalid("skip");
+
+        Dataset<Row> indexedData = stringIndexer1.fit(trainingData).transform(trainingData);
+        indexedData = stringIndexer2.fit(indexedData).transform(indexedData);
+        indexedData = stringIndexer3.fit(indexedData).transform(indexedData);
+
+        SQLTransformer sqlTrans = new SQLTransformer().setStatement(
+                "SELECT *, 100*PCT_1_IDX + 10*PCT_2_IDX + PCT_3_IDX AS label FROM __THIS__ " +
+                        "WHERE PCT_1_IDX is not null AND PCT_2_IDX is not null AND PCT_3_IDX is not null");
+
+        sqlTrans.transform(indexedData).show(false);
+
         LogisticRegression lr = new LogisticRegression()
-                .setMaxIter(20)
+                .setMaxIter(10)
                 .setRegParam(0.3)
                 .setElasticNetParam(0.8);
 
 
-        Pipeline pipeline = new Pipeline().setStages(new PipelineStage[] {tokenizer, remover, hashingTF, lr});
+        Pipeline pipeline = new Pipeline().setStages(new PipelineStage[] {
+                tokenizer,
+                remover,
+                hashingTF,
+                //idf,
+                stringIndexer1,
+                stringIndexer2,
+                stringIndexer3,
+                sqlTrans,
+                lr});
 
         PipelineModel model = pipeline.fit(trainingData);
 
         model.transform(testData);
 
         Dataset<Row> predictions = model.transform(testData);
-        for (Row r : predictions.select("id", "DESCRIPTION", "probability", "prediction").collectAsList()) {
-            System.out.println("(" + r.get(0) + ", " + r.get(1) + ") --> prob=" + r.get(2)
-                    + ", prediction=" + r.get(3));
+        for (Row r : predictions.select("DESCRIPTION", "probability", "prediction").collectAsList()) {
+            System.out.println("(" + r.get(0) + ") --> prediction=" + r.get(2));
         }
-
-        /* ==================================
-        Example from https://spark.apache.org/docs/latest/ml-features.html#tf-idf
-         */
-
-//        List<Row> dataEx = Arrays.asList(
-//                RowFactory.create(0.0, "Hi I heard about Spark"),
-//                RowFactory.create(0.0, "I wish Java could use case classes"),
-//                RowFactory.create(2.0, "Logistic regression models are neat")
-//        );
-//        StructType schema = new StructType(new StructField[]{
-//                new StructField("label", DataTypes.DoubleType, false, Metadata.empty()),
-//                new StructField("sentence", DataTypes.StringType, false, Metadata.empty())
-//        });
-//        Dataset<Row> sentenceData = spark.createDataFrame(dataEx, schema);
-//
-//        Tokenizer tokenizerEx = new Tokenizer().setInputCol("sentence").setOutputCol("words");
-//        Dataset<Row> wordsData = tokenizerEx.transform(sentenceData);
-//
-//        HashingTF hashingTFEx = new HashingTF()
-//                .setInputCol("words")
-//                .setOutputCol("rawFeatures")
-//                .setNumFeatures(numFeatures);
-//
-//        Dataset<Row> featurizedDataEx = hashingTFEx.transform(wordsData);
-//
-//        IDF idfEx = new IDF().setInputCol("rawFeatures").setOutputCol("features");
-//        IDFModel idfModelEx = idfEx.fit(featurizedDataEx);
-//
-//        Dataset<Row> rescaledDataEx = idfModelEx.transform(featurizedDataEx);
-//        rescaledDataEx.select("label", "words", "rawFeatures", "features").show(false);
-
-        /* ============
-        End of example
-         */
-
-
-//        IDF idf = new IDF().setInputCol("rawFeatures").setOutputCol("features");
-//        IDFModel idfModel = idf.fit(featurizedData);
-//        Dataset<Row> rescaledData = idfModel.transform(featurizedData);
-//
-//        Word2Vec word2Vec = new Word2Vec()
-//                .setInputCol("desc_nosw")
-//                .setOutputCol("vectorized")
-//                .setVectorSize(3)
-//                .setMinCount(0);
-//
-//        Word2VecModel model = word2Vec.fit(swremoved);
-//        Dataset<Row> vectorized = model.transform(swremoved);
-//        rescaledData.select("DESCRIPTION", "desc_words", "desc_nosw", "rawFeatures", "features").show(false);
-//                .withColumn("countTokens", callUDF("countTokens", col("desc_nosw")))
-//                .where("countTokens = 4").show(false);
-
     }
 
 }
