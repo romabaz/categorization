@@ -43,7 +43,7 @@ public class Playground {
                 .getOrCreate();
 
         //1. feature extraction
-        File file = new File(classLoader.getResource("tickets_input.csv").getFile());
+        File file = new File(classLoader.getResource("csv/tickets_input.csv").getFile());
 
         int numFeatures = 100;
 
@@ -66,7 +66,7 @@ public class Playground {
 
         HashingTF hashingTF = new HashingTF()
                 .setInputCol(remover.getOutputCol())
-                .setOutputCol("features")
+                .setOutputCol("features1")
                 .setNumFeatures(numFeatures);
 
         IDF idf = new IDF()
@@ -106,7 +106,7 @@ public class Playground {
                 tokenizer,
                 remover,
                 hashingTF,
-                //idf,
+                idf,
                 stringIndexer1,
                 stringIndexer2,
                 stringIndexer3,
@@ -115,11 +115,9 @@ public class Playground {
 
         PipelineModel model = pipeline.fit(trainingData);
 
-        model.transform(testData);
-
         Dataset<Row> predictions = model.transform(testData);
-        for (Row r : predictions.select("DESCRIPTION", "probability", "prediction").collectAsList()) {
-            System.out.println("(" + r.get(0) + ") --> prediction=" + r.get(2));
+        for (Row r : predictions.select("DESCRIPTION", "PRODUCT_CATEGORIZATION_TIER_1", "PRODUCT_CATEGORIZATION_TIER_2", "PRODUCT_CATEGORIZATION_TIER_3", "probability", "prediction").collectAsList()) {
+            System.out.println("(" + r.get(0) + ":"+ r.get(1) + " " + r.get(2) + " " + r.get(3) + ") --> prediction=" + r.get(5));
         }
     }
 
